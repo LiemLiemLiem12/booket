@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "TICKETS" ADD COLUMN     "quantity" INTEGER NOT NULL DEFAULT 1;

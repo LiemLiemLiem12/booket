@@ -6,7 +6,7 @@ import { DrawSeatController } from './draw-seat.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [],
   controllers: [SeatController, DrawSeatController],
   providers: [SeatService, DrawSeatService],
   exports: [SeatService, DrawSeatService],

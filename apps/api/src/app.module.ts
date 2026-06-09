@@ -9,9 +9,19 @@ import { SeatModule } from './seat/seat.module';
 import { TicketModule } from './ticket/ticket.module';
 import { OrderModule } from './order/order.module';
 import { SytemConfigModule } from './sytem-config/sytem-config.module';
+import { PaymentModule } from './payment/payment.module';
 
 @Module({
-  imports: [PrismaModule, UserModule, CampaignModule, SeatModule, TicketModule, OrderModule, SytemConfigModule],
+  imports: [
+    PrismaModule,
+    UserModule,
+    CampaignModule,
+    SeatModule,
+    TicketModule,
+    OrderModule,
+    SytemConfigModule,
+    PaymentModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

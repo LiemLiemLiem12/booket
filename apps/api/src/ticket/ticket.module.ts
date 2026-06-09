@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
-import { TicketService } from './ticket.service';
-import { TicketController } from './ticket.controller';
+import { TicketSaleSessionService } from './ticket-sale-session.service';
+import { TicketSaleSessionController } from './ticket-sale-session.controller';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  controllers: [TicketController],
-  providers: [TicketService],
+  imports: [PrismaModule],
+  controllers: [TicketSaleSessionController],
+  providers: [TicketSaleSessionService],
+  exports: [TicketSaleSessionService],
 })
 export class TicketModule {}
