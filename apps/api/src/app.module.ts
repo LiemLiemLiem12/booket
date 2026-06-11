@@ -10,9 +10,12 @@ import { TicketModule } from './ticket/ticket.module';
 import { OrderModule } from './order/order.module';
 import { SytemConfigModule } from './sytem-config/sytem-config.module';
 import { PaymentModule } from './payment/payment.module';
+import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 
 @Module({
   imports: [
+    EventEmitterModule.forRoot(),
     PrismaModule,
     UserModule,
     CampaignModule,
@@ -21,6 +24,7 @@ import { PaymentModule } from './payment/payment.module';
     OrderModule,
     SytemConfigModule,
     PaymentModule,
+    ConfigModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [AppService],

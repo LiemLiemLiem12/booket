@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { PrismaClient } from 'src/generated/prisma/edge';
@@ -7,15 +7,27 @@ import TransactionStatus from './enums/transaction-status.enum';
 import TicketStatus from 'src/ticket/enums/ticket-status.enum';
 import { PaymentService } from 'src/payment/payment.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
+import { OnEvent } from '@nestjs/event-emitter';
 
 @Injectable()
 export class OrderService {
+  private readonly logger = new Logger(OrderService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly paymentService: PaymentService,
+    private readonly configService: ConfigService,
   ) {}
 
-  async create(createOrderDto: CreateOrderDto, ipAddress: string) {
+  async create(createOrderDto: CreateOrderDto) {
+    const expiredAmount = Number(
+      this.configService.get<any>('EXPIRE_AMOUNT', 1),
+    );
+    let startDateObj = new Date();
+    const expireDateObj = new Date();
+    expireDateObj.setMinutes(
+      expireDateObj.getMinutes() + Number(expiredAmount),
+    );
     const result = await this.prisma.$transaction(async (tx) => {
       const buyer = await tx.user.findUnique({
         where: { id: createOrderDto.buyerId },
@@ -68,34 +80,70 @@ export class OrderService {
           paymentGateway: createOrderDto.paymentGateway,
           expiresAt: createOrderDto.expiresAt
             ? new Date(createOrderDto.expiresAt)
-            : undefined,
+            : expireDateObj,
+          createdAt: startDateObj,
           tickets: {
             connect: createOrderDto.ticketIds.map((id) => ({ id })),
           },
         },
       });
-
-      const paymentTx = await tx.paymentTransaction.create({
-        data: {
-          orderId: order.id,
-          transactionReference: `${createOrderDto.paymentGateway}_${order.id}_${Date.now()}`,
-          amount: calculatedOrderPrice,
-          status: TransactionStatus.PENDING,
-        },
-      });
-
-      return { order, paymentTx };
+      return order;
     });
 
-    const res = this.paymentService.createPayment(
-      createOrderDto.paymentGateway,
-      result.order.id,
-      createOrderDto.totalPrice,
-      null,
-      ipAddress,
-    );
+    return result;
+  }
 
-    return res;
+  async handleExpiredOrders() {
+    const now = new Date();
+
+    const expiredOrders = await this.prisma.order.findMany({
+      where: {
+        status: OrderStatus.PENDING,
+        expiresAt: {
+          lt: now,
+        },
+      },
+      include: {
+        tickets: true,
+      },
+      take: 50,
+    });
+
+    if (expiredOrders.length === 0) {
+      return { count: 0 };
+    }
+
+    let revertedCount = 0;
+    for (const order of expiredOrders) {
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: OrderStatus.FAILED },
+          });
+
+          const ticketIds = order.tickets.map((t) => t.id);
+          if (ticketIds.length > 0) {
+            await tx.ticket.updateMany({
+              where: { id: { in: ticketIds } },
+              data: { status: TicketStatus.AVAILABLE },
+            });
+          }
+
+          await tx.paymentTransaction.updateMany({
+            where: {
+              orderId: order.id,
+              status: TransactionStatus.PENDING,
+            },
+            data: { status: TransactionStatus.FAILED },
+          });
+        });
+        revertedCount++;
+      } catch (error) {
+        // Quietly fail individual order transaction to let others proceed
+      }
+    }
+    return { count: revertedCount };
   }
 
   findAll() {
@@ -112,5 +160,139 @@ export class OrderService {
 
   remove(id: number) {
     return `This action removes a #${id} order`;
+  }
+
+  @OnEvent('order.payment.success')
+  async handleOrderPaymentSuccess(query: any) {
+    const transactionId = query['vnp_TxnRef'];
+    const vnpAmount = Number(query['vnp_Amount']) / 100;
+
+    const paymentTx = await this.prisma.paymentTransaction.findUnique({
+      where: { id: transactionId },
+      include: {
+        order: {
+          include: {
+            tickets: true,
+          },
+        },
+      },
+    });
+
+    if (!paymentTx) {
+      this.logger.error(`Transaction not found: ${transactionId}`);
+      return;
+    }
+
+    const order = paymentTx.order;
+
+    if (vnpAmount !== Number(order.totalPrice)) {
+      this.logger.error(
+        `Payment amount mismatch for transaction ${transactionId}. Expected: ${order.totalPrice}, Got: ${vnpAmount}`,
+      );
+      return;
+    }
+
+    if (order.status !== OrderStatus.PENDING) {
+      this.logger.warn(
+        `Order ${order.id} is already processed. Status: ${order.status}`,
+      );
+      return;
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: OrderStatus.SUCCESS },
+        });
+
+        const ticketIds = order.tickets.map((t) => t.id);
+        if (ticketIds.length > 0) {
+          await tx.ticket.updateMany({
+            where: { id: { in: ticketIds } },
+            data: { status: TicketStatus.SOLD },
+          });
+        }
+
+        await tx.paymentTransaction.update({
+          where: { id: paymentTx.id },
+          data: {
+            status: TransactionStatus.SUCCESS,
+            callbackPayload: query,
+          },
+        });
+      });
+      this.logger.log(
+        `Order ${order.id} marked as SUCCESS via VNPAY callback.`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error updating success status for order ${order.id}:`,
+        error,
+      );
+    }
+  }
+
+  @OnEvent('order.payment.failed')
+  async handleOrderPaymentFailed(query: any) {
+    const transactionId = query['vnp_TxnRef'];
+
+    const paymentTx = await this.prisma.paymentTransaction.findUnique({
+      where: { id: transactionId },
+      include: {
+        order: {
+          include: {
+            tickets: true,
+          },
+        },
+      },
+    });
+
+    if (!paymentTx) {
+      this.logger.error(`Transaction not found: ${transactionId}`);
+      return;
+    }
+
+    const order = paymentTx.order;
+
+    if (order.status !== OrderStatus.PENDING) {
+      this.logger.warn(
+        `Order ${order.id} is already processed. Status: ${order.status}`,
+      );
+      return;
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: OrderStatus.FAILED },
+        });
+
+        const ticketIds = order.tickets.map((t) => t.id);
+        if (ticketIds.length > 0) {
+          await tx.ticket.updateMany({
+            where: { id: { in: ticketIds } },
+            data: { status: TicketStatus.AVAILABLE },
+          });
+        }
+
+        await tx.paymentTransaction.update({
+          where: { id: paymentTx.id },
+          data: {
+            status: TransactionStatus.FAILED,
+            callbackPayload: query,
+          },
+        });
+      });
+      this.logger.log(
+        `Order ${order.id} marked as FAILED via VNPAY callback. Tickets released.`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error updating failure status for order ${order.id}:`,
+        error,
+      );
+    }
   }
 }

@@ -7,4 +7,5 @@ export type VnpayPayment = {
   locale: string;
   currencyCode: string;
   returnUrl: string;
+  expireAmount: number;
 };

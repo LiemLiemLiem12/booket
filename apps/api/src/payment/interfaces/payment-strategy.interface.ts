@@ -4,6 +4,7 @@ export interface IPaymentStrategy {
     amount: number,
     bankCode: string | null,
     ipAddress: string,
+    transactionId: string,
   );
   verifyWebhook(data: any);
 }

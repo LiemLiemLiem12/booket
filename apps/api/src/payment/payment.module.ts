@@ -34,6 +34,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
             'VNPAY_RETURN_URL',
             'return-url',
           ),
+          expireAmount: Number(configService.get<any>('EXPIRE_AMOUNT', 1)),
         });
       },
       inject: [ConfigService],

@@ -14,6 +14,7 @@ export default class VnpayStrategy implements IPaymentStrategy {
   private locale: string;
   private currencyCode: string;
   private returnUrl: string;
+  private expireAmount: number;
 
   constructor(data: VnpayPayment) {
     this.apiUrl = data.apiUrl;
@@ -24,6 +25,7 @@ export default class VnpayStrategy implements IPaymentStrategy {
     this.locale = data.locale;
     this.currencyCode = data.currencyCode;
     this.returnUrl = data.returnUrl;
+    this.expireAmount = data.expireAmount;
   }
 
   createPayment(
@@ -31,9 +33,15 @@ export default class VnpayStrategy implements IPaymentStrategy {
     amount: number,
     bankCode: string,
     ipAddress: string,
+    transactionId: string,
   ) {
-    let date = new Date();
-    const createDate = formatDate(date);
+    let startDateObj = new Date();
+    const expireDateObj = new Date();
+    expireDateObj.setMinutes(
+      expireDateObj.getMinutes() + Number(this.expireAmount),
+    );
+    const createDate = formatDate(startDateObj);
+    const endDate = formatDate(expireDateObj);
     let vnp_Params: any = {};
 
     if (
@@ -44,7 +52,8 @@ export default class VnpayStrategy implements IPaymentStrategy {
       this.tmnCode === undefined ||
       this.locale === undefined ||
       this.currencyCode === undefined ||
-      this.returnUrl === undefined
+      this.returnUrl === undefined ||
+      this.expireAmount === undefined
     ) {
       throw new Error('Missing VNPAY configuration');
     }
@@ -54,13 +63,14 @@ export default class VnpayStrategy implements IPaymentStrategy {
     vnp_Params['vnp_TmnCode'] = this.tmnCode;
     vnp_Params['vnp_Locale'] = this.locale;
     vnp_Params['vnp_CurrCode'] = this.currencyCode;
-    vnp_Params['vnp_TxnRef'] = orderId;
+    vnp_Params['vnp_TxnRef'] = transactionId;
     vnp_Params['vnp_OrderInfo'] = 'Thanh toan cho ma GD:' + orderId;
     vnp_Params['vnp_OrderType'] = 'other';
     vnp_Params['vnp_Amount'] = amount * 100;
     vnp_Params['vnp_ReturnUrl'] = this.returnUrl;
     vnp_Params['vnp_IpAddr'] = ipAddress;
     vnp_Params['vnp_CreateDate'] = createDate;
+    vnp_Params['vnp_ExpireDate'] = endDate;
     if (bankCode !== null && bankCode !== '') {
       vnp_Params['vnp_BankCode'] = bankCode;
     }
@@ -72,13 +82,13 @@ export default class VnpayStrategy implements IPaymentStrategy {
     hmac.update(signData);
     const signed = hmac.digest('hex');
     vnp_Params['vnp_SecureHash'] = signed;
-    const url = (this.apiUrl +=
-      '?' + querystring.stringify(vnp_Params, { encode: false }));
+    const url =
+      this.apiUrl + '?' + querystring.stringify(vnp_Params, { encode: false });
 
     return url;
   }
 
-  verifyWebhook(data: any) {
+  verifyWebhook(query: any): boolean {
     if (
       this.apiUrl === undefined ||
       this.secretKey === undefined ||
@@ -92,7 +102,20 @@ export default class VnpayStrategy implements IPaymentStrategy {
       throw new Error('Missing VNPAY configuration');
     }
 
-    console.log('Received webhook data:', data);
-    throw new Error('Method not implemented.');
+    const secureHash = query['vnp_SecureHash'];
+    if (!secureHash) return false;
+
+    let vnp_Params = { ...query };
+    delete vnp_Params['vnp_SecureHash'];
+    delete vnp_Params['vnp_SecureHashType'];
+
+    vnp_Params = sortObject(vnp_Params);
+
+    const signData = querystring.stringify(vnp_Params, { encode: false });
+    const hmac = crypto.createHmac('sha512', this.secretKey);
+    hmac.update(signData);
+    const signed = hmac.digest('hex');
+
+    return signed.toLowerCase() === secureHash.toLowerCase();
   }
 }
