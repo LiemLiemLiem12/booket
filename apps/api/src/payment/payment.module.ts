@@ -7,6 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 @Module({
   imports: [ConfigModule],
   controllers: [PaymentController],
+  exports: [PaymentService],
   providers: [
     PaymentService,
     {
@@ -15,8 +16,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         return new VnpayStrategy({
           apiUrl: configService.get<string>('VNPAY_API_URL', 'api-url'),
           secretKey: configService.get<string>(
-            'VNPAY_SECRET_KEY',
-            'secret-key',
+            'VNPAY_HASH_SECRET',
+            configService.get<string>('VNPAY_HASH_SECRET', 'secret-key'),
           ),
           apiVersion: configService.get<string>(
             'VNPAY_API_VERSION',

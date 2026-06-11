@@ -14,7 +14,7 @@ export class PaymentService {
     provider: string,
     orderId: string,
     amount: number,
-    bankCode: string,
+    bankCode: string | null,
     ipAddress: string,
   ) {
     const strategy = this.paymentStrategies.get(provider);

@@ -72,9 +72,10 @@ export default class VnpayStrategy implements IPaymentStrategy {
     hmac.update(signData);
     const signed = hmac.digest('hex');
     vnp_Params['vnp_SecureHash'] = signed;
-    this.apiUrl += '?' + querystring.stringify(vnp_Params, { encode: false });
+    const url = (this.apiUrl +=
+      '?' + querystring.stringify(vnp_Params, { encode: false }));
 
-    return vnp_Params;
+    return url;
   }
 
   verifyWebhook(data: any) {
